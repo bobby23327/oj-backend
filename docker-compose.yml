@@ -1,0 +1,149 @@
+version: "3.8"
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: oj-postgres
+    environment:
+      POSTGRES_DB: oj_db
+      POSTGRES_USER: oj_user
+      POSTGRES_PASSWORD: oj_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+  # Redis缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: oj-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+  # 主应用服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oj-backend
+    environment:
+      - DATABASE_URL=postgresql://oj_user:oj_password@postgres:5432/oj_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - SECRET_KEY=your-secret-key-here-change-in-production
+      - DEBUG=False
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oj-celery-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://oj_user:oj_password@postgres:5432/oj_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - SECRET_KEY=your-secret-key-here-change-in-production
+      - DEBUG=False
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+  # Celery Beat (定时任务)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oj-celery-beat
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://oj_user:oj_password@postgres:5432/oj_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - SECRET_KEY=your-secret-key-here-change-in-production
+      - DEBUG=False
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+  # 评测服务
+  judge:
+    build:
+      context: ./docker/judge
+      dockerfile: Dockerfile
+    container_name: oj-judge
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - JUDGE_TIMEOUT=10
+      - JUDGE_MEMORY_LIMIT=512
+      - JUDGE_CPU_LIMIT=1.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./uploads:/app/uploads
+    depends_on:
+      - redis
+    networks:
+      - oj-network
+    restart: unless-stopped
+    privileged: true # 需要Docker权限
+
+  # Nginx反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: oj-nginx
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    networks:
+      - oj-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  oj-network:
+    driver: bridge
