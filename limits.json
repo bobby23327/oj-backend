@@ -1,0 +1,12 @@
+{
+    "time_limit": 1000,
+    "memory_limit": 65536,
+    "cpu_limit": 1,
+    "output_limit": 65536,
+    "stack_limit": 8192,
+    "process_limit": 1,
+    "file_size_limit": 1048576,
+    "network_enabled": false,
+    "chroot_enabled": true,
+    "seccomp_enabled": true
+} 
